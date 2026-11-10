@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key><string>Murmur</string>
+	<key>CFBundleDisplayName</key><string>Murmur</string>
+	<key>CFBundleExecutable</key><string>Murmur</string>
+	<key>CFBundleIdentifier</key><string>io.github.rovlezmex.murmur</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleShortVersionString</key><string>0.1.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>LSMinimumSystemVersion</key><string>26.0</string>
+	<key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+	<key>LSUIElement</key><true/>
+	<key>NSHumanReadableCopyright</key><string>© 2026 RovleZMex. MIT License.</string>
+	<key>NSMicrophoneUsageDescription</key><string>Murmur records your microphone so your side of the conversation is transcribed.</string>
+	<key>NSAudioCaptureUsageDescription</key><string>Murmur records your Mac's audio so the other participants are transcribed.</string>
+	<key>NSSpeechRecognitionUsageDescription</key><string>Murmur transcribes your recordings on-device.</string>
+</dict>
+</plist>
