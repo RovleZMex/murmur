@@ -62,13 +62,20 @@ case "$MODE" in
   --release)
     codesign --force --options runtime --timestamp \
       --entitlements Resources/Murmur.entitlements --sign "$IDENTITY" "$APP"
+    # 1) Notarize the app itself and staple its ticket (so it verifies offline).
+    echo "Notarizing the app (usually 1–5 minutes)…"
+    ditto -c -k --keepParent "$APP" build/Murmur.zip
+    xcrun notarytool submit build/Murmur.zip --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$APP"
+    rm -f build/Murmur.zip
+    # 2) Package it in a dmg, then notarize and staple the dmg too.
+    rm -rf build/dmg "dist/Murmur-$VERSION.dmg"
     mkdir -p dist build/dmg
-    rm -rf build/dmg/* "dist/Murmur-$VERSION.dmg"
     cp -R "$APP" build/dmg/
     ln -s /Applications build/dmg/Applications
     hdiutil create -volname "Murmur $VERSION" -srcfolder build/dmg -ov -format UDZO "dist/Murmur-$VERSION.dmg"
     codesign --sign "$IDENTITY" --timestamp "dist/Murmur-$VERSION.dmg"
-    echo "Submitting to Apple for notarization (usually 1–5 minutes)…"
+    echo "Notarizing the dmg…"
     xcrun notarytool submit "dist/Murmur-$VERSION.dmg" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "dist/Murmur-$VERSION.dmg"
     spctl --assess --type open --context context:primary-signature -v "dist/Murmur-$VERSION.dmg"
