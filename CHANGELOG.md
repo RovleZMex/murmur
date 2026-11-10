@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — Unreleased
+## 0.2.0 — 2026-11-10
 
 ### Added
 - **Settings window** (menu → Settings…, ⌘, or open Murmur again while it's running) with three tabs:
