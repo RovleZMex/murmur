@@ -32,7 +32,8 @@
 - **Records both sides.** Captures your Mac's audio (Zoom, Meet, Teams, a browser tab, anything) and your microphone at the same time.
 - **Knows who's talking.** Your mic is labeled **Me**, everything else **Others**, interleaved by timestamp.
 - **On-device transcription.** Uses Apple's built-in speech engine (`SpeechAnalyzer`). Nothing is uploaded.
-- **Global shortcuts.** Start, pause and stop from any app without touching the mouse.
+- **Global shortcuts.** Start, pause and stop from any app without touching the mouse — and change them to whatever you like.
+- **Make it yours.** Pick the microphone, what to record, where files go, which audio to keep, the language and speaker names.
 - **Organized output.** Every session gets its own folder with a Markdown transcript and an `.m4a` recording.
 - **Crash-safe.** Audio is streamed to disk while recording, so a crash or power loss doesn't cost you the meeting.
 - **100% native and tiny.** Swift, SwiftUI, ScreenCaptureKit. No Electron, no dependencies, no background services.
@@ -66,7 +67,23 @@ After granting *Screen & System Audio Recording*, macOS may ask you to quit and 
 | ⏸ | Pause / resume | <kbd>⌃</kbd> <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>P</kbd> |
 | ■ | Stop and transcribe | <kbd>⌃</kbd> <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>R</kbd> |
 
-When you stop, Murmur transcribes the session and opens the transcript. From the menu you can also pick the **transcription language** (English or Spanish) and enable **Open at login**.
+When you stop, Murmur transcribes the session and opens the transcript.
+
+### Settings
+
+Open **Settings…** from the menu (or open Murmur again while it's running).
+
+| Tab | Setting | Default |
+|---|---|---|
+| General | Save recordings in | `~/Documents/Murmur` |
+| | Keep audio | One mixed file · separate tracks · none |
+| | When a transcript is ready | Open it · show a notification · do nothing |
+| | Keyboard shortcuts | ⌃⌥⌘R, ⌃⌥⌘P (click to change, Delete to disable) |
+| | Open Murmur at login | Off |
+| Recording | Record | Mac audio and microphone · mic only · Mac audio only |
+| | Microphone | System default, or any connected mic |
+| Transcription | Language | English (US) — any language Apple's engine supports |
+| | Speaker labels | Me / Others |
 
 ### Output
 
@@ -112,6 +129,7 @@ make install      # builds, copies to ~/Applications and launches
 | `make` | Build `build/Murmur.app` |
 | `make install` | Build, install to `~/Applications` and launch |
 | `make release` | Universal build, Developer ID signed and notarized `.dmg` in `dist/` |
+| `make test` | Run the test suite |
 | `make assets` | Regenerate the app icon and this README's banner |
 
 <details>
@@ -140,6 +158,8 @@ The app binary doubles as a small CLI:
 | [`AppModel.swift`](Sources/AppModel.swift) | Recording state machine (idle → recording ⇄ paused → processing). |
 | [`MurmurApp.swift`](Sources/MurmurApp.swift) | `MenuBarExtra` UI and CLI entry point. |
 | [`HotKeys.swift`](Sources/HotKeys.swift) | Global shortcuts via `RegisterEventHotKey` (no Accessibility permission needed). |
+| [`Prefs.swift`](Sources/Prefs.swift) / [`SettingsView.swift`](Sources/SettingsView.swift) | Preferences and the Settings window. |
+| [`Tests/`](Tests) | Swift Testing suite: every setting, every combination. |
 </details>
 
 ## FAQ
@@ -154,7 +174,7 @@ Not yet. Everything coming from your Mac is labeled *Others*.
 Apple's model is tuned for speech. Conversations transcribe well; songs don't.
 
 **Which languages are supported?**
-English and Spanish from the menu. Apple's engine supports more; contributions to expose them are welcome.
+Every language Apple's on-device speech engine supports on your Mac — pick one in Settings → Transcription.
 
 ## Contributing
 

@@ -3,12 +3,9 @@ import Carbon.HIToolbox
 /// Global hotkeys (work from any app) via RegisterEventHotKey.
 /// No Accessibility permission required.
 final class HotKeys {
-    private var refs: [EventHotKeyRef?] = []
+    private var refs: [EventHotKeyRef] = []
     private var actions: [UInt32: () -> Void] = [:]
     private var handler: EventHandlerRef?
-
-    /// ⌃⌥⌘ — rarely used by other apps.
-    static let modifiers = UInt32(controlKey | optionKey | cmdKey)
 
     init() {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -25,14 +22,24 @@ final class HotKeys {
         }, 1, &spec, me, &handler)
     }
 
-    func register(keyCode: Int, _ action: @escaping () -> Void) {
+    @discardableResult
+    func register(_ shortcut: Shortcut, _ action: @escaping () -> Void) -> Bool {
         let id = UInt32(actions.count + 1)
         actions[id] = action
         var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(UInt32(keyCode), Self.modifiers,
+        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers,
                                          EventHotKeyID(signature: OSType(0x4D52_4D52), id: id), // 'MRMR'
                                          GetApplicationEventTarget(), 0, &ref)
-        if status != noErr { NSLog("Murmur: couldn't register hotkey (code \(keyCode)): \(status)") }
-        refs.append(ref)
+        if status != noErr { NSLog("Murmur: couldn't register hotkey \(shortcut.display): \(status)") }
+        if let ref { refs.append(ref) }
+        return status == noErr
+    }
+
+    var count: Int { refs.count }
+
+    func unregisterAll() {
+        refs.forEach { UnregisterEventHotKey($0) }
+        refs.removeAll()
+        actions.removeAll()
     }
 }

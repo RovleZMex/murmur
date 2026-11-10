@@ -22,27 +22,38 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pausedTotal: CMTime = .zero
     private var pauseStart: CMTime?
 
-    func start(systemURL: URL, micURL: URL, includeMic: Bool) async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first else { throw RecorderError.noDisplay }
-
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+    /// The stream configuration for a capture mode and microphone choice. Pure, so it's testable
+    /// without permissions. An unknown or disconnected mic ID falls back to the system default.
+    static func configuration(includeMic: Bool, includeSystem: Bool, micDeviceID: String) -> SCStreamConfiguration {
         let cfg = SCStreamConfiguration()
-        cfg.capturesAudio = true
+        cfg.capturesAudio = includeSystem
         cfg.excludesCurrentProcessAudio = true
         cfg.sampleRate = 48_000
         cfg.channelCount = 2
         cfg.captureMicrophone = includeMic
-        if includeMic, let mic = AVCaptureDevice.default(for: .audio) {
+        if includeMic, let mic = resolveMicrophone(micDeviceID) {
             cfg.microphoneCaptureDeviceID = mic.uniqueID
         }
         // Minimal video: we only care about audio.
         cfg.width = 2
         cfg.height = 2
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        return cfg
+    }
+
+    static func resolveMicrophone(_ id: String) -> AVCaptureDevice? {
+        (id.isEmpty ? nil : AVCaptureDevice(uniqueID: id)) ?? AVCaptureDevice.default(for: .audio)
+    }
+
+    func start(systemURL: URL, micURL: URL, includeMic: Bool, includeSystem: Bool, micDeviceID: String) async throws {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else { throw RecorderError.noDisplay }
+
+        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let cfg = Self.configuration(includeMic: includeMic, includeSystem: includeSystem, micDeviceID: micDeviceID)
 
         queue.sync {
-            systemTrack = TrackWriter(url: systemURL)
+            systemTrack = includeSystem ? TrackWriter(url: systemURL) : nil
             micTrack = includeMic ? TrackWriter(url: micURL) : nil
             pausedTotal = .zero
             pauseStart = nil
@@ -51,7 +62,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let s = SCStream(filter: filter, configuration: cfg, delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+        if includeSystem { try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
         if includeMic { try s.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue) }
         try await s.startCapture()
         stream = s

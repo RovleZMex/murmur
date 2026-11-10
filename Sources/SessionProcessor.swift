@@ -1,6 +1,6 @@
 import AVFoundation
 
-/// Each session lives in its own folder: ~/Documents/Murmur/2026-11-10 14.30/
+/// Each session lives in its own folder, e.g. ~/Documents/Murmur/2026-11-10 14.30/
 struct Session {
     let folder: URL
     let startedAt: Date
@@ -10,10 +10,7 @@ struct Session {
     var audioURL: URL { folder.appendingPathComponent("audio.m4a") }
     var transcriptURL: URL { folder.appendingPathComponent("transcript.md") }
 
-    static var root: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Murmur", isDirectory: true)
-    }
+    static var root: URL { Prefs.folder }
 
     static func create() throws -> Session {
         let now = Date()
@@ -33,18 +30,27 @@ struct Session {
 enum SessionProcessor {
     enum Step { case downloadingModel, transcribing, mixing }
 
-    /// Transcribes both tracks, writes transcript.md, mixes audio.m4a and deletes the .caf files.
+    /// Turns one audio file into timestamped segments. Swappable in tests.
+    typealias TranscribeFn = (_ url: URL, _ locale: Locale) async throws -> [Transcriber.Segment]
+    /// Resolves a locale and downloads its model if needed. Swappable in tests.
+    typealias PrepareFn = (_ locale: Locale, _ onDownload: @escaping () -> Void) async throws -> Locale
+
+    /// Transcribes the tracks, writes transcript.md, saves audio per `keepAudio` and deletes the .caf files.
     static func process(_ session: Session, duration: TimeInterval, locale: Locale,
+                        myName: String = Prefs.myName, othersName: String = Prefs.othersName,
+                        keepAudio: Prefs.KeepAudio = Prefs.keepAudio,
+                        prepare: PrepareFn = { try await Transcriber.prepare(locale: $0, onDownload: $1) },
+                        transcribe: TranscribeFn = { try await Transcriber.transcribe(url: $0, locale: $1) },
                         progress: @escaping (Step) -> Void) async throws -> URL {
         let fm = FileManager.default
-        let tracks: [(label: String, url: URL)] = [("Me", session.micURL), ("Others", session.systemURL)]
+        let tracks: [(label: String, url: URL)] = [(myName, session.micURL), (othersName, session.systemURL)]
             .filter { hasAudio($0.url) }
 
-        let loc = try await Transcriber.prepare(locale: locale) { progress(.downloadingModel) }
+        let loc = try await prepare(locale) { progress(.downloadingModel) }
         progress(.transcribing)
         var lines: [(start: Double, speaker: String, text: String)] = []
         for track in tracks {
-            for seg in try await Transcriber.transcribe(url: track.url, locale: loc) {
+            for seg in try await transcribe(track.url, loc) {
                 lines.append((seg.start, track.label, seg.text))
             }
         }
@@ -55,10 +61,19 @@ enum SessionProcessor {
 
         progress(.mixing)
         do {
-            try await mix(tracks.map(\.url), to: session.audioURL)
+            switch keepAudio {
+            case .mixed:
+                try await mix(tracks.map(\.url), to: session.audioURL)
+            case .separate:
+                for t in tracks {
+                    try await mix([t.url], to: t.url.deletingPathExtension().appendingPathExtension("m4a"))
+                }
+            case .none:
+                break
+            }
             for t in tracks { try? fm.removeItem(at: t.url) }
         } catch {
-            NSLog("Murmur: couldn't mix audio, keeping the .caf files: \(error)")
+            NSLog("Murmur: couldn't save audio, keeping the .caf files: \(error)")
         }
         return session.transcriptURL
     }

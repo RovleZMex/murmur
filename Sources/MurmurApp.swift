@@ -1,6 +1,8 @@
 import AppKit
+import Carbon.HIToolbox
 import AVFoundation
 import SwiftUI
+import UserNotifications
 
 @main
 enum Entry {
@@ -53,8 +55,30 @@ enum Entry {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var model: AppModel?
+    var openSettings: (() -> Void)?
+
+    /// Opening Murmur again while it's running (Finder, Spotlight) shows Settings.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.activate()
+        openSettings?()
+        return false
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// Clicking "Transcript ready" opens the transcript.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        if let path = response.notification.request.content.userInfo["url"] as? String {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions { [.banner, .sound] }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
@@ -69,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MurmurApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @Environment(\.openSettings) private var openSettings
 
     var body: some Scene {
         MenuBarExtra {
@@ -85,14 +110,22 @@ struct MurmurApp: App {
                     Text(text).monospacedDigit()
                 }
             }
-            .onAppear { delegate.model = model }
+            .onAppear {
+                delegate.model = model
+                delegate.openSettings = { openSettings() }
+            }
         }
         .menuBarExtraStyle(.menu)
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
 struct MenuContent: View {
     @ObservedObject var model: AppModel
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Text(model.statusLine)
@@ -105,17 +138,17 @@ struct MenuContent: View {
         switch model.phase {
         case .idle:
             Button("Start recording") { model.start() }
-                .keyboardShortcut("r", modifiers: [.control, .option, .command])
+                .globalShortcut(model.recordShortcut)
         case .recording:
             Button("Pause") { model.pause() }
-                .keyboardShortcut("p", modifiers: [.control, .option, .command])
+                .globalShortcut(model.pauseShortcut)
             Button("Stop and transcribe") { model.stop() }
-                .keyboardShortcut("r", modifiers: [.control, .option, .command])
+                .globalShortcut(model.recordShortcut)
         case .paused:
             Button("Resume") { model.resume() }
-                .keyboardShortcut("p", modifiers: [.control, .option, .command])
+                .globalShortcut(model.pauseShortcut)
             Button("Stop and transcribe") { model.stop() }
-                .keyboardShortcut("r", modifiers: [.control, .option, .command])
+                .globalShortcut(model.recordShortcut)
         case .processing:
             Button("Processing…") {}.disabled(true)
         case .error:
@@ -131,17 +164,37 @@ struct MenuContent: View {
         }
         Button("Open recordings folder") { model.openSessionsFolder() }
 
-        Picker("Transcription language", selection: $model.languageID) {
-            Text("English").tag("en-US")
-            Text("Spanish").tag("es-MX")
-        }
-        .disabled(model.isBusy)
-
-        Toggle("Open at login", isOn: $model.launchAtLogin)
-
         Divider()
+
+        Button("Settings…") {
+            NSApp.activate()
+            openSettings()
+        }
+        .keyboardShortcut(",")
 
         Button("Quit Murmur") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+private extension View {
+    /// Shows the (global) shortcut next to a menu item, if it maps to a SwiftUI key equivalent.
+    @ViewBuilder func globalShortcut(_ shortcut: Shortcut?) -> some View {
+        if let shortcut, shortcut.key.count == 1, let ch = shortcut.key.lowercased().first {
+            self.keyboardShortcut(KeyEquivalent(ch), modifiers: shortcut.swiftUIModifiers)
+        } else {
+            self
+        }
+    }
+}
+
+private extension Shortcut {
+    var swiftUIModifiers: SwiftUI.EventModifiers {
+        var m: SwiftUI.EventModifiers = []
+        if modifiers & UInt32(controlKey) != 0 { m.insert(.control) }
+        if modifiers & UInt32(optionKey) != 0 { m.insert(.option) }
+        if modifiers & UInt32(shiftKey) != 0 { m.insert(.shift) }
+        if modifiers & UInt32(cmdKey) != 0 { m.insert(.command) }
+        return m
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
-import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -17,12 +17,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var lastTranscript: URL?
     @Published private(set) var warning: String?
-    @Published var languageID: String = UserDefaults.standard.string(forKey: "language") ?? "en-US" {
-        didSet { UserDefaults.standard.set(languageID, forKey: "language") }
-    }
-    @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled {
-        didSet { setLaunchAtLogin(launchAtLogin) }
-    }
 
     private let recorder = Recorder()
     private var session: Session?
@@ -31,12 +25,19 @@ final class AppModel: ObservableObject {
     private var accumulated: TimeInterval = 0
     private var processingTask: Task<Void, Never>?
     private var micGranted = true
+    private var mode: Prefs.CaptureMode = .both
+    private var hotKeySignature = ""
+    private var defaultsObserver: NSObjectProtocol?
 
     private let hotKeys = HotKeys()
 
     init() {
-        hotKeys.register(keyCode: 15 /* R */) { [weak self] in self?.toggleRecording() }
-        hotKeys.register(keyCode: 35 /* P */) { [weak self] in self?.togglePause() }
+        registerHotKeys()
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.registerHotKeys() }
+        }
         recorder.onStreamError = { [weak self] error in
             Task { @MainActor in self?.streamFailed(error) }
         }
@@ -71,19 +72,26 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Acciones
+    // MARK: Actions
 
     func start() {
         guard phase == .idle || isError else { return }
         Task {
-            micGranted = await AVCaptureDevice.requestAccess(for: .audio)
+            mode = Prefs.captureMode
+            micGranted = mode.includesMic ? await AVCaptureDevice.requestAccess(for: .audio) : false
+            if mode == .micOnly && !micGranted {
+                phase = .error("Microphone permission is missing")
+                return
+            }
             var created: Session?
             do {
                 let s = try Session.create()
                 created = s
-                try await recorder.start(systemURL: s.systemURL, micURL: s.micURL, includeMic: micGranted)
+                try await recorder.start(systemURL: s.systemURL, micURL: s.micURL,
+                                         includeMic: micGranted, includeSystem: mode.includesSystem,
+                                         micDeviceID: Prefs.micDeviceID)
                 session = s
-                warning = micGranted ? nil : "no microphone (permission denied)"
+                warning = (mode.includesMic && !micGranted) ? "no microphone (permission denied)" : nil
                 accumulated = 0
                 elapsed = 0
                 segmentStart = Date()
@@ -129,7 +137,7 @@ final class AppModel: ObservableObject {
         segmentStart = nil
         stopTimer()
         let duration = accumulated
-        let locale = Locale(identifier: languageID)
+        let locale = Locale(identifier: Prefs.languageID)
         phase = .processing("Saving audio…")
         processingTask = Task {
             defer { session = nil; processingTask = nil }
@@ -152,7 +160,11 @@ final class AppModel: ObservableObject {
                 lastTranscript = url
                 phase = .idle
                 warning = nil
-                NSWorkspace.shared.open(url)
+                switch Prefs.afterProcessing {
+                case .openTranscript: NSWorkspace.shared.open(url)
+                case .notify: await Self.notifyReady(url, duration: duration)
+                case .nothing: break
+                }
             } catch {
                 phase = .error("Transcription failed: \(error.localizedDescription). The audio was kept in the folder.")
             }
@@ -163,6 +175,34 @@ final class AppModel: ObservableObject {
     func finishBeforeQuit() async {
         if phase == .recording || phase == .paused { stop() }
         await processingTask?.value
+    }
+
+    // MARK: Hotkeys
+
+    private func registerHotKeys() {
+        let rec = Shortcut.load(Prefs.Key.recordShortcut, default: .defaultRecord)
+        let pause = Shortcut.load(Prefs.Key.pauseShortcut, default: .defaultPause)
+        let signature = "\(rec?.stored ?? "-")|\(pause?.stored ?? "-")"
+        guard signature != hotKeySignature else { return }
+        hotKeySignature = signature
+        hotKeys.unregisterAll()
+        if let rec { hotKeys.register(rec) { [weak self] in self?.toggleRecording() } }
+        if let pause { hotKeys.register(pause) { [weak self] in self?.togglePause() } }
+    }
+
+    var recordShortcut: Shortcut? { Shortcut.load(Prefs.Key.recordShortcut, default: .defaultRecord) }
+    var pauseShortcut: Shortcut? { Shortcut.load(Prefs.Key.pauseShortcut, default: .defaultPause) }
+
+    // MARK: Notifications
+
+    private static func notifyReady(_ url: URL, duration: TimeInterval) async {
+        let center = UNUserNotificationCenter.current()
+        guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Transcript ready"
+        content.body = "\(url.deletingLastPathComponent().lastPathComponent) · \(clock(duration))"
+        content.userInfo = ["url": url.path]
+        try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
     func openSessionsFolder() {
@@ -179,7 +219,7 @@ final class AppModel: ObservableObject {
     var isError: Bool { if case .error = phase { return true } else { return false } }
     var isBusy: Bool { if case .processing = phase { return true } else { return false } }
 
-    // MARK: Privado
+    // MARK: Private
 
     private func streamFailed(_ error: Error) {
         guard phase == .recording || phase == .paused else { return }
@@ -198,7 +238,7 @@ final class AppModel: ObservableObject {
                     let st = self.recorder.stats()
                     if st.system == 0 && st.mic == 0 {
                         self.warning = "no audio coming in, check permissions"
-                    } else if self.micGranted && st.mic == 0 {
+                    } else if self.micGranted && self.mode.includesMic && st.mic == 0 {
                         self.warning = "the microphone isn't sending audio"
                     }
                 }
@@ -209,14 +249,6 @@ final class AppModel: ObservableObject {
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
-    }
-
-    private func setLaunchAtLogin(_ on: Bool) {
-        do {
-            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-        } catch {
-            NSLog("Murmur: couldn't change open-at-login: \(error)")
-        }
     }
 
     static func clock(_ t: TimeInterval) -> String {
